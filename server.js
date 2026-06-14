@@ -9,12 +9,17 @@ const { createProxyMiddleware } = require("http-proxy-middleware");
 const app = express();
 
 
-app.use(express.json());
 
-app.use(express.urlencoded({ extended: true }));
 
 app.use(requestLogger);
 app.use(sqliDetector);
+
+
+app.use((req, res, next) => {
+  console.log("Content-Type:", req.headers["content-type"]);
+  console.log("Method:", req.method);
+  next();
+});
 
 
 app.use((req, res, next) => {
