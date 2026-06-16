@@ -3,7 +3,6 @@ require("dotenv").config();
 const requestLogger = require("./middleware/requestLogger");
 const sqliDetector = require("./middleware/sqliDetector");
 const wafVerification = require("./middleware/wafVerification");
-const headerForwarder = require("./middleware/headerForwarder");
 
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
@@ -17,8 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 // Security & Logging Middleware
 app.use(requestLogger);
 app.use(sqliDetector);
-app.use(wafVerification); // Add verification header after passing security checks
-app.use(headerForwarder);
+app.use(wafVerification); // Add x-waf-forward: true if request passed all security checks
 
 
 // Debug middleware - removed as functionality moved to requestLogger
