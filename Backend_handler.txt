@@ -1,0 +1,30 @@
+// Upstream Backend Validation Middleware Example
+const crypto = require("crypto");
+
+const verifyWafTrust = (req, res, next) => {
+  const wafHeader = req.headers["x-waf-forward"];
+  if (!wafHeader) {
+    return res.status(403).json({ error: "Access Denied", message: "Direct origin access is prohibited." });
+  }
+
+  const [payloadBase64, signature] = wafHeader.split(".");
+  const sharedSecret = process.env.WAF_SHARED_SECRET || "super-secret-key-change-me";
+
+  const expectedSignature = crypto
+    .createHmac("sha256", sharedSecret)
+    .update(payloadBase64)
+    .digest("hex");
+
+  if (signature !== expectedSignature) {
+    return res.status(401).json({ error: "Tampering Detected", message: "Invalid WAF cryptographic token signature." });
+  }
+
+  // Optional: Decode and verify timestamp to prevent replay attacks (e.g., must be under 5 seconds old)
+  const decoded = JSON.parse(Buffer.from(payloadBase64, "base64").toString());
+  const timeDifference = Date.now() - new Date(decoded.timestamp).getTime();
+  if (timeDifference > 5000) { 
+    return res.status(401).json({ error: "Token Expired", message: "WAF request context signature timed out." });
+  }
+
+  next();
+};

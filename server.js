@@ -5,21 +5,20 @@ const sqliDetector = require("./middleware/sqliDetector");
 const wafVerification = require("./middleware/wafVerification");
 
 const express = require("express");
-const { createProxyMiddleware } = require("http-proxy-middleware");
+// Change: Import fixRequestBody alongside createProxyMiddleware
+const { createProxyMiddleware, fixRequestBody } = require("http-proxy-middleware");
 
 const app = express();
 
-// Parse JSON and URL-encoded bodies
+// Parse JSON and URL-encoded bodies - necessary for WAF inspection
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Security & Logging Middleware
 app.use(requestLogger);
 app.use(sqliDetector);
-app.use(wafVerification); // Add x-waf-forward: true if request passed all security checks
+app.use(wafVerification); // Adds verification signature/headers
 
-
-// Debug middleware - removed as functionality moved to requestLogger
 // Proxy middleware configuration
 app.use(
   "/",
@@ -27,30 +26,39 @@ app.use(
     target: process.env.TARGET_API,
     changeOrigin: true,
     logLevel: "debug",
-    // Ensure request body is forwarded
-    proxyReqBodyExtender: (bodyContent, srcReq) => {
-      // Forward the parsed body as-is, includes x-waf-forward header
-      if (srcReq.body && Object.keys(srcReq.body).length > 0) {
-        console.log("Forwarding body data:", srcReq.body);
-        return JSON.stringify(srcReq.body);
-      }
-      return bodyContent;
-    },
-    // Log when request is sent to target
+    // Log when request is sent to target and fix the body stream deadlock
     onProxyReq: (proxyReq, req, res) => {
       console.log("Proxying request with headers:", {
         method: req.method,
         url: req.originalUrl,
         xWafForward: req.headers["x-waf-forward"] ? "✓ Present" : "✗ Missing",
       });
+
+      // Fix: If an express body parser has parsed the body, restream it to the proxy request target.
+      if (req.body && Object.keys(req.body).length > 0) {
+        // Option A: Use the built-in utility
+        fixRequestBody(proxyReq, req);
+        
+        /*If fixRequestBody ever misbehaves with custom content types, 
+          the explicit manual fallback is to intercept it right here:
+          
+          const bodyData = JSON.stringify(req.body);
+          proxyReq.setHeader('Content-Type', 'application/json');
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          proxyReq.write(bodyData);
+        */
+      }
     },
     // Log responses from target
     onProxyRes: (proxyRes, req, res) => {
       console.log("Received response from target:", {
         statusCode: proxyRes.statusCode,
-        headers: proxyRes.headers,
       });
     },
+    onError: (err, req, res) => {
+      console.error("WAF Proxy Error:", err);
+      res.status(502).json({ error: "Bad Gateway", message: "WAF failed to connect to backend upstream." });
+    }
   })
 );
 
