@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const requestLogger = require("./middleware/requestLogger");
+const rateLimiter = require("./middleware/rateLimiter");
 const securityInspector = require("./middleware/securityInspector");
 const wafVerification = require("./middleware/wafVerification");
 
@@ -16,6 +17,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Security & Logging Middleware
 app.use(requestLogger);
+app.use(rateLimiter); // Limits the number of requests from a single IP
 app.use(securityInspector); // Inspects Requests for malicious patterns and blocks them
 app.use(wafVerification); // Adds verification signature/headers
 
