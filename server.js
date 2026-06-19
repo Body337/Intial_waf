@@ -6,7 +6,7 @@ const securityInspector = require("./middleware/securityInspector");
 const wafVerification = require("./middleware/wafVerification");
 
 const express = require("express");
-// Change: Import fixRequestBody alongside createProxyMiddleware
+// imports the proxy middleware and the fixRequestBody utility for handling request body streams
 const { createProxyMiddleware, fixRequestBody } = require("http-proxy-middleware");
 
 const app = express();
