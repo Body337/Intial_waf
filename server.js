@@ -1,7 +1,7 @@
 require("dotenv").config();
 
 const requestLogger = require("./middleware/requestLogger");
-const sqliDetector = require("./middleware/sqliDetector");
+const securityInspector = require("./middleware/securityInspector");
 const wafVerification = require("./middleware/wafVerification");
 
 const express = require("express");
@@ -16,7 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Security & Logging Middleware
 app.use(requestLogger);
-app.use(sqliDetector);
+app.use(securityInspector); // Inspects Requests for malicious patterns and blocks them
 app.use(wafVerification); // Adds verification signature/headers
 
 // Proxy middleware configuration

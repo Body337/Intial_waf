@@ -1,26 +1,24 @@
-// middleware/secureHeaderForwarder.js
+// middleware/wafVerification.js
 const crypto = require("crypto");
 
 module.exports = (req, res, next) => {
-  const sharedSecret = process.env.WAF_SHARED_SECRET || "super-secret-key-change-me";
+  const secret = process.env.WAF_SHARED_SECRET;
+  if (!secret) {
+    console.error("CRITICAL: WAF_SHARED_SECRET is not configured in .env");
+    return res.status(500).json({ error: "Internal WAF Configuration Error" });
+  }
 
-  const headerData = {
-    method: req.method,
-    originalUrl: req.originalUrl,
-    timestamp: new Date().toISOString(),
-    clientIp: req.ip,
-  };
-
-  const payloadBase64 = Buffer.from(JSON.stringify(headerData)).toString("base64");
+  const timestamp = Date.now().toString();
   
-  // Create an HMAC signature to prove authenticity
-  const signature = crypto
-    .createHmac("sha256", sharedSecret)
-    .update(payloadBase64)
-    .digest("hex");
+  // Create a cryptographic signature combining the method, path, and timestamp
+  const hmac = crypto.createHmac("sha256", secret);
+  hmac.update(`${req.method}:${req.originalUrl}:${timestamp}`);
+  const signature = hmac.digest("hex");
 
-  // Combine payload and signature: payload.signature
-  req.headers["x-waf-forward"] = `${payloadBase64}.${signature}`;
+  // Pass these tokens along to the backend
+  req.headers["x-waf-timestamp"] = timestamp;
+  req.headers["x-waf-signature"] = signature;
 
+  console.log(`✓ Request signed securely by WAF. Timestamp: ${timestamp}`);
   next();
 };
