@@ -12,8 +12,8 @@ const { createProxyMiddleware, fixRequestBody } = require("http-proxy-middleware
 const app = express();
 
 // Parse JSON and URL-encoded bodies - necessary for WAF inspection
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+//app.use(express.json());
+//app.use(express.urlencoded({ extended: true }));
 
 // Security & Logging Middleware
 app.use(requestLogger);
