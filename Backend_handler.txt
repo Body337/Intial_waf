@@ -1,30 +1,96 @@
-// Upstream Backend Validation Middleware Example
+// middleware/wafGuard.js
 const crypto = require("crypto");
 
-const verifyWafTrust = (req, res, next) => {
-  const wafHeader = req.headers["x-waf-forward"];
-  if (!wafHeader) {
-    return res.status(403).json({ error: "Access Denied", message: "Direct origin access is prohibited." });
+const REPLAY_WINDOW_MS = 30000; // 30-second sliding freshness window
+
+module.exports = (req, res, next) => {
+  const secret = process.env.WAF_SHARED_SECRET;
+  if (!secret) {
+    console.error("CRITICAL BACKEND ERROR: WAF_SHARED_SECRET environment variable is missing.");
+    return res.status(500).json({ error: "Backend Configuration Error" });
   }
 
-  const [payloadBase64, signature] = wafHeader.split(".");
-  const sharedSecret = process.env.WAF_SHARED_SECRET || "super-secret-key-change-me";
+  // 1. Extract the secure transmission headers sent by our WAF proxy
+  const signature = req.headers["x-waf-signature"];
+  const timestamp = req.headers["x-waf-timestamp"];
+  const clientIp = req.headers["x-waf-client-ip"];
 
-  const expectedSignature = crypto
-    .createHmac("sha256", sharedSecret)
-    .update(payloadBase64)
-    .digest("hex");
-
-  if (signature !== expectedSignature) {
-    return res.status(401).json({ error: "Tampering Detected", message: "Invalid WAF cryptographic token signature." });
+  // Fallback check: If headers are completely missing, drop the connection
+  if (!signature || !timestamp || !clientIp) {
+    console.warn(`🛑 UNAUTHORIZED DIRECT ACCESS: Request blocked from IP ${req.ip}. Missing WAF credentials.`);
+    return res.status(401).json({
+      error: "Unauthorized Direct Access Prohibited",
+      message: "This backend service only accepts secure traffic routed through the authorized WAF gateway."
+    });
   }
 
-  // Optional: Decode and verify timestamp to prevent replay attacks (e.g., must be under 5 seconds old)
-  const decoded = JSON.parse(Buffer.from(payloadBase64, "base64").toString());
-  const timeDifference = Date.now() - new Date(decoded.timestamp).getTime();
-  if (timeDifference > 5000) { 
-    return res.status(401).json({ error: "Token Expired", message: "WAF request context signature timed out." });
+  // 2. Mitigate Replay Attacks: Check if the timestamp window has expired
+  const now = Date.now();
+  const requestTime = parseInt(timestamp, 10);
+
+  if (isNaN(requestTime) || Math.abs(now - requestTime) > REPLAY_WINDOW_MS) {
+    console.warn(`🛑 SECURITY ALERT: Blocked expired/replayed WAF request. Clock skew delta: ${Math.abs(now - requestTime)}ms`);
+    return res.status(403).json({ error: "Request Expired (Replay Protection Triggered)" });
   }
 
+  // 3. Cryptographic Proof: Recalculate signature using the matching backend secret
+  const hmac = crypto.createHmac("sha256", secret);
+  hmac.update(`${req.method}:${req.originalUrl}:${timestamp}:${clientIp}`);
+  const computedSignature = hmac.digest("hex");
+
+  // Constant-time comparison to prevent timing side-channel attacks
+  try {
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(signature, "hex"),
+      Buffer.from(computedSignature, "hex")
+    );
+
+    if (!isValid) {
+      throw new Error("Signature mismatch");
+    }
+  } catch (err) {
+    console.error(`🛑 TAMPERING DETECTED: Invalid signature presented from network origin: ${req.ip}`);
+    return res.status(403).json({ error: "Cryptographic Verification Failed" });
+  }
+
+  // 4. Overwrite standard request IP identifier with the WAF-verified True Client IP
+  // This ensures downstream components or local logging record the student's real IP!
+  req.realClientIp = clientIp;
+
+  console.log(`✅ Secure Connection Verified from WAF proxy. Real Client: ${clientIp}`);
   next();
 };
+
+
+
+
+
+
+
+////////////////////////////////////BackEnd_starting java script/////////////////////////////////////////////////
+
+require("dotenv").config();
+const express = require("express");
+const wafGuard = require("./middleware/wafGuard");
+
+const app = express();
+
+// 1. Core security gate: Drop anyone who isn't coming through the WAF safely
+app.use(wafGuard);
+
+// 2. Downstream parsing & router logic
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Example protected endpoint
+app.get("/plans", (req, res) => {
+  // Use the verified client IP safely passed forward by the guard middleware
+  console.log(`Serving plans to client: ${req.realClientIp}`);
+  res.json([
+    { id: 1, name: "Undergraduate Basic Plan" },
+    { id: 2, name: "Premium Research Tier" }
+  ]);
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Secure Backend Origin listening on port ${PORT}`));

@@ -4,7 +4,7 @@
 const ipCache = new Map();
 
 const WINDOW_MS = 60 * 1000; // 1 minute window
-const MAX_REQUESTS = 20;     // Max requests per window allowed by WAF
+const MAX_REQUESTS = 200;     // Max requests per window allowed by WAF
 
 module.exports = (req, res, next) => {
   // Extract real client IP (handling reverse proxy deployments like Railway/Vercel)
