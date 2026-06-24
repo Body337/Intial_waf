@@ -12,8 +12,8 @@ const { createProxyMiddleware, fixRequestBody } = require("http-proxy-middleware
 const app = express();
 
 // Parse JSON and URL-encoded bodies - necessary for WAF inspection
-//app.use(express.json());
-//app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Security & Logging Middleware
 app.use(requestLogger);
@@ -36,19 +36,31 @@ app.use(
         xWafForward: req.headers["x-waf-forward"] ? "✓ Present" : "✗ Missing",
       });
 
-      // Fix: If an express body parser has parsed the body, restream it to the proxy request target.
+      // THE FIX: Explicitly rewrite the body stream if Express consumed it
       if (req.body && Object.keys(req.body).length > 0) {
-        // Option A: Use the built-in utility
-        fixRequestBody(proxyReq, req);
         
-        /*If fixRequestBody ever misbehaves with custom content types, 
-          the explicit manual fallback is to intercept it right here:
-          
-          const bodyData = JSON.stringify(req.body);
-          proxyReq.setHeader('Content-Type', 'application/json');
-          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-          proxyReq.write(bodyData);
-        */
+        let bodyData;
+        
+        // Handle JSON payloads (Most common for React/Vercel frontends)
+        if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
+            bodyData = JSON.stringify(req.body);
+            proxyReq.setHeader('Content-Type', 'application/json');
+        } 
+        // Handle Form Data
+        else if (req.headers['content-type'] && req.headers['content-type'].includes('application/x-www-form-urlencoded')) {
+            bodyData = Object.keys(req.body)
+                .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(req.body[k])}`)
+                .join('&');
+            proxyReq.setHeader('Content-Type', 'application/x-www-form-urlencoded');
+        }
+
+        // Write the data to the proxy stream
+        if (bodyData) {
+            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+            proxyReq.write(bodyData);
+            // End the write stream so the proxy knows the body is complete
+            proxyReq.end(); 
+        }
       }
     },
     // Log responses from target
