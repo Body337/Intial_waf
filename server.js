@@ -30,36 +30,40 @@ app.use(
     logLevel: "debug",
     // Log when request is sent to target and fix the body stream deadlock
     onProxyReq: (proxyReq, req, res) => {
-      console.log("Proxying request with headers:", {
-        method: req.method,
-        url: req.originalUrl,
-        xWafForward: req.headers["x-waf-forward"] ? "✓ Present" : "✗ Missing",
-      });
+      console.log("Proxying request:", req.method, req.originalUrl);
 
-      // THE FIX: Explicitly rewrite the body stream if Express consumed it
-      if (req.body && Object.keys(req.body).length > 0) {
+      // Only intervene for methods that typically carry payloads
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
         
-        let bodyData;
-        
-        // Handle JSON payloads (Most common for React/Vercel frontends)
-        if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
-            bodyData = JSON.stringify(req.body);
-            proxyReq.setHeader('Content-Type', 'application/json');
-        } 
-        // Handle Form Data
-        else if (req.headers['content-type'] && req.headers['content-type'].includes('application/x-www-form-urlencoded')) {
-            bodyData = Object.keys(req.body)
+        // If Express body-parser consumed the stream, req.body will exist
+        if (req.body) {
+          let bodyData = '';
+
+          // 1. If the body actually contains data, normalize and stringify it
+          if (Object.keys(req.body).length > 0) {
+            if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
+              bodyData = JSON.stringify(req.body);
+              proxyReq.setHeader('Content-Type', 'application/json');
+            } else if (req.headers['content-type'] && req.headers['content-type'].includes('application/x-www-form-urlencoded')) {
+              bodyData = Object.keys(req.body)
                 .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(req.body[k])}`)
                 .join('&');
-            proxyReq.setHeader('Content-Type', 'application/x-www-form-urlencoded');
-        }
+              proxyReq.setHeader('Content-Type', 'application/x-www-form-urlencoded');
+            }
+          }
 
-        // Write the data to the proxy stream
-        if (bodyData) {
-            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          // 2. Explicitly tell the backend exactly how many bytes to expect.
+          // For an 'approve' request, this will correctly calculate to 0.
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+
+          // 3. Write the data to the stream (if any exists)
+          if (bodyData) {
             proxyReq.write(bodyData);
-            // End the write stream so the proxy knows the body is complete
-            proxyReq.end(); 
+          }
+
+          // 4. CRITICAL FIX: Always end the proxy stream for these methods!
+          // This tells the backend "I'm done sending data, process the request now."
+          proxyReq.end();
         }
       }
     },
